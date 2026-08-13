@@ -1,0 +1,140 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Read-only cross-account role that lets the hub account collect AWS DevOps
+  Agent topology (assets, associations) and investigations (chats, journal
+  records, recommendations). Deployed into every linked account via a
+  service-managed CloudFormation StackSet, and into the management account
+  as a standalone stack.
+
+Parameters:
+  HubAccountId:
+    Type: String
+    Description: Account ID of the hub that assumes this role.
+    Default: '123456789012'
+  CollectorRoleName:
+    Type: String
+    Default: DevOpsAgentCollectorRole
+  ExternalId:
+    Type: String
+    Default: devops-agent-hub-123456789012
+  AllowAgentSpaceCreation:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+    Description: >
+      When true, the role may also create an agent space (aidevops:CreateAgentSpace)
+      so the hub can bootstrap a space in accounts that have none. Leave false to
+      keep the role strictly read-only for ongoing collection.
+
+Conditions:
+  AllowCreate: !Equals [!Ref AllowAgentSpaceCreation, 'true']
+  # The hub account gets its DevOpsAgentSpaceMonitorRole from the web app's
+  # Amplify backend, so the StackSet must NOT create a same-named role there
+  # (it would collide). Linked/management accounts get it from this template.
+  IsNotHubAccount: !Not [!Equals [!Ref 'AWS::AccountId', !Ref HubAccountId]]
+  CreateMonitorRole: !And [!Condition AllowCreate, !Condition IsNotHubAccount]
+
+Resources:
+  CollectorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref CollectorRoleName
+      Description: Read-only access for the DevOps Agent data hub to collect topology and investigations.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${HubAccountId}:root'
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: DevOpsAgentReadOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # All read-only surface of the AWS DevOps Agent API
+              # (service prefix: aidevops). List*/Get*/Describe* only.
+              - Sid: DevOpsAgentRead
+                Effect: Allow
+                Action:
+                  - aidevops:List*
+                  - aidevops:Get*
+                  - aidevops:Describe*
+                  - aidevops:ValidateAwsAssociations
+                Resource: '*'
+              # Capability metrics (read-only): CloudWatch Logs vended-delivery
+              # lookups power the per-space log-delivery-endpoint count, and the
+              # Identity Center assignments listing powers the operator-app
+              # user-access count. Both are best-effort in the collector.
+              - Sid: CapabilityMetricsRead
+                Effect: Allow
+                Action:
+                  - logs:DescribeDeliveries
+                  - logs:DescribeDeliverySources
+                  - sso:ListApplicationAssignments
+                Resource: '*'
+              # Optional bootstrap permissions (off by default): let the hub
+              # create a starter agent space in accounts that have none AND
+              # attach this account as the space's primary (monitor) account.
+              - !If
+                - AllowCreate
+                - Sid: DevOpsAgentBootstrap
+                  Effect: Allow
+                  Action:
+                    - aidevops:CreateAgentSpace
+                    - aidevops:AssociateService
+                  # Resource '*' is required: aidevops:CreateAgentSpace and
+                  # aidevops:AssociateService do not support resource-level
+                  # permissions (similar to ecr:GetAuthorizationToken).
+                  Resource: '*'
+                - !Ref AWS::NoValue
+              # Attaching the primary account passes the monitor role below to
+              # the DevOps Agent service, which requires iam:PassRole scoped to
+              # that role and the aidevops service.
+              - !If
+                - AllowCreate
+                - Sid: PassMonitorRole
+                  Effect: Allow
+                  Action: iam:PassRole
+                  Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/DevOpsAgentSpaceMonitorRole'
+                  Condition:
+                    StringEquals:
+                      iam:PassedToService: aidevops.amazonaws.com
+                - !Ref AWS::NoValue
+
+  # Role the AWS DevOps Agent service assumes to MONITOR this account. It is the
+  # assumable role in the primary-account association attached to spaces the hub
+  # creates here (mirrors the hub account's DevOpsAgentSpaceMonitorRole). Created
+  # only when agent-space creation is enabled, since it is only needed then.
+  MonitorRole:
+    Type: AWS::IAM::Role
+    Condition: CreateMonitorRole
+    Properties:
+      RoleName: DevOpsAgentSpaceMonitorRole
+      Description: Assumed by the AWS DevOps Agent service to monitor this account (primary-account association for spaces created by the hub).
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: aidevops.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:aws:aidevops:*:${AWS::AccountId}:agentspace/*'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy
+
+Outputs:
+  CollectorRoleArn:
+    Description: ARN of the collector role (same name in every account).
+    Value: !GetAtt CollectorRole.Arn
+  MonitorRoleArn:
+    Condition: CreateMonitorRole
+    Description: ARN of the monitor role the DevOps Agent service assumes (present only in non-hub accounts when agent-space creation is enabled).
+    Value: !GetAtt MonitorRole.Arn

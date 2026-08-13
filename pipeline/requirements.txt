@@ -1,0 +1,5 @@
+# Refresh-pipeline runtime dependencies (webapp task 10.1).
+# boto3/botocore pinned to a version verified to include the `devops-agent`,
+# `neptune-graph`, and `bedrock-agent` clients used by the hub scripts.
+boto3==1.43.36
+botocore==1.43.36

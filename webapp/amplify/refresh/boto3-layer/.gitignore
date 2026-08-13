@@ -1,0 +1,3 @@
+# The layer's dependencies are built at deploy time (see README.md); only this
+# directory + the README are tracked so the CDK asset path always resolves.
+python/

@@ -1,0 +1,34 @@
+name: Python Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - 'pipeline/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - 'pipeline/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r pipeline/requirements.txt
+          pip install pytest pytest-mock
+
+      - name: Run tests
+        run: pytest scripts/test_*.py -v
+        env:
+          AWS_DEFAULT_REGION: us-east-1

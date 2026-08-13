@@ -1,0 +1,47 @@
+# --- OS / editor ---
+.DS_Store
+.vscode/
+.kiro/
+
+# --- Node / webapp ---
+node_modules/
+dist/
+build/
+.npm/
+npm-debug.log*
+yarn-error.log*
+
+# --- Env / secrets (never commit) ---
+.env
+.env.*
+!.env.example
+*.local
+# Deployment-specific config (account ids, bucket, ARNs). Use config.env.example
+# as the committed template; keep real values in an untracked config.env.
+config.env
+
+# --- Amplify Gen 2 (generated at deploy; never commit) ---
+amplify_outputs.json
+amplify_outputs*.json
+.amplify/
+amplifyconfiguration*
+
+# --- Python pipeline ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# --- Generated artifacts ---
+graph.html
+
+# --- Security scan outputs (PCSR evidence; regenerate with run_pcsr_scans.sh) ---
+pcsr_scan_outputs/
+
+# --- AIO2 review artifacts (contain real account ids, ARNs, security findings) ---
+aio2-data-*/
+
+# --- Internal Kiro spec docs (design/requirements/tasks) — kept local only ---
+.kiro/specs/

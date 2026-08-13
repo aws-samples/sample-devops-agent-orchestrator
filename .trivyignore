@@ -1,0 +1,22 @@
+# Trivy ignore file - each entry must carry a justification.
+
+# DS-0031 "Possible exposure of secret env in ENV" on pipeline/Dockerfile.
+#
+# False positive. The check is a name-based heuristic and matches
+# PIPELINE_CREDENTIALS_MODE because the identifier contains "CREDENTIALS".
+# The variable holds no secret: its only value is the literal string "default",
+# a mode flag telling scripts/_common.py to use the ambient ECS task role
+# credential chain instead of a named AWS CLI profile (see _common.py
+# _use_default_credentials). No credential material is passed via ENV or
+# build-args anywhere in this image - the task obtains credentials at runtime
+# from the ECS task role.
+DS-0031
+
+# DS-0026 "No HEALTHCHECK defined" on pipeline/Dockerfile.
+#
+# Not applicable. A Docker HEALTHCHECK monitors a long-running service. This
+# image is a one-shot batch task: the refresh Step Functions state machine runs
+# it to completion and branches on the task exit code, and pipeline_entrypoint.py
+# emits per-stage markers plus a non-zero exit on the first failing stage. A
+# HEALTHCHECK would add no signal that the state machine does not already have.
+DS-0026

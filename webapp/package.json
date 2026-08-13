@@ -1,0 +1,50 @@
+{
+  "name": "devops-observatory-webapp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DevOps Observatory Web App — authenticated executive SPA over the DevOps Agent hub backend (Amplify Gen 2).",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p amplify/tsconfig.json",
+    "sandbox": "ampx sandbox",
+    "sandbox:delete": "ampx sandbox delete",
+    "deploy": "ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agent-runtime": "3.1079.0",
+    "@aws-sdk/client-lambda": "^3.1083.0",
+    "@aws-sdk/client-neptune-graph": "^3.1079.0",
+    "@aws-sdk/client-s3": "^3.1078.0",
+    "@aws-sdk/client-secrets-manager": "^3.1078.0",
+    "@aws-sdk/client-sfn": "^3.1078.0",
+    "@aws/durable-execution-sdk-js": "^2.2.0",
+    "@devops-observatory/shared-types": "*",
+    "aws-amplify": "^6.6.0",
+    "aws-jwt-verify": "5.2.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vis-data": "^7.1.9",
+    "vis-network": "^9.1.9"
+  },
+  "devDependencies": {
+    "@aws-amplify/backend": "^1.4.0",
+    "@aws-amplify/backend-cli": "^1.2.9",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "aws-cdk-lib": "^2.158.0",
+    "constructs": "^10.3.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8"
+  },
+  "overrides": {
+    "handlebars": "4.7.9"
+  }
+}

@@ -1,0 +1,62 @@
+# ---------------------------------------------------------------------------
+# AWS Amplify Hosting build spec — DevOps Observatory Web App (Task 19)
+# ---------------------------------------------------------------------------
+# Satisfies Requirement 1.1: the app is built and hosted as a single-entry-point
+# web application with git-based CI/CD — no AWS console or ad-hoc scripts needed
+# to reach it.
+#
+# This is an Amplify Gen 2 FULLSTACK app in a monorepo: the web app lives in
+# `webapp/`, so this uses the `applications:` form with `appRoot: webapp`. All
+# phase commands run from that directory.
+#
+# Two phases per build:
+#   backend  — `ampx pipeline-deploy` synthesizes + deploys the CDK backend
+#              (Cognito, HTTP API, Lambda handlers, chat Function URL, refresh
+#              Step Functions/Fargate) and writes `amplify_outputs.json` into
+#              the app root. The backend reads its hub-config env vars
+#              (HUB_BUCKET, NEPTUNE_GRAPH_ENDPOINT, KB_ID, KB_CHAT_MODEL_ARN,
+#              APP_ORIGIN, MGMT_ROLE_ARN) from the Amplify environment variables
+#              — see webapp/OPERATIONS.md. Never hardcode secrets here.
+#   frontend — `npm run build` type-checks + builds the Vite SPA to `dist/`,
+#              baking in the just-generated `amplify_outputs.json`.
+#
+# AWS_BRANCH and AWS_APP_ID are provided automatically by Amplify Hosting.
+# ---------------------------------------------------------------------------
+version: 1
+applications:
+  - appRoot: webapp
+    backend:
+      phases:
+        build:
+          commands:
+            # Reproducible install from the committed lockfile.
+            - npm ci --cache .npm --prefer-offline
+            # Build the refresh workers' boto3 layer (pure Python, no Docker) so
+            # the Python Lambdas get a devops-agent-capable boto3. Must run
+            # before pipeline-deploy so the CDK layer asset is populated. Skip
+            # when already restored from cache so the CDK asset hash stays stable
+            # (no ~90MB re-upload) and the build stays well under the timeout.
+            - '[ -d amplify/refresh/boto3-layer/python/boto3 ] || pip3 install --target amplify/refresh/boto3-layer/python boto3 botocore'
+            # Deploy the Gen 2 backend for this branch and emit amplify_outputs.json.
+            - npx ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - npm ci --cache .npm --prefer-offline
+        build:
+          commands:
+            # `npm run build` = typecheck (SPA + backend + shared-types) then Vite build.
+            - npm run build
+      artifacts:
+        # Vite output, relative to appRoot (webapp/dist).
+        baseDirectory: dist
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - .npm/**/*
+          - node_modules/**/*
+          # Persist the pip-built boto3 layer so it isn't rebuilt/re-uploaded
+          # every deploy (keeps the CDK asset hash stable and the build fast).
+          - amplify/refresh/boto3-layer/python/**/*

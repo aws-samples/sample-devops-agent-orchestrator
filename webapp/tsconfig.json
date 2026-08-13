@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "types": ["vite/client"]
+  },
+  "include": ["src"],
+  // Test files run via tsx (`node --import tsx --test`) and use Node's built-in
+  // test runner (node:test / node:assert), so they are excluded from the app's
+  // DOM/browser typecheck which does not include Node types.
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+}

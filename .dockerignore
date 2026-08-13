@@ -1,0 +1,13 @@
+# Keep the refresh-pipeline image build context (repo root) small. Only
+# config.env and scripts/ are needed by pipeline/Dockerfile.
+.git
+.kiro
+.vscode
+.pytest_cache
+**/__pycache__
+**/*.pyc
+webapp
+cloudformation
+graph.html
+README.md
+*.md

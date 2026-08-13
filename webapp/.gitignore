@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Amplify Gen 2 generated backend outputs (environment-specific — never commit)
+amplify_outputs.json
+amplify_outputs.*.json
+.amplify/
+
+# Local environment / secrets (use .env.example as the template)
+.env
+.env.local
+.env.*.local
+
+# Logs & OS cruft
+npm-debug.log*
+.DS_Store

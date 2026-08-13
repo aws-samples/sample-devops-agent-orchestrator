@@ -1,0 +1,9 @@
+# gitleaks allowlist — one finding fingerprint per line (file:rule:line).
+# These are false positives: fake placeholder tokens used as unit-test
+# fixtures, not real secrets.
+#
+# webapp/amplify/functions/shared/a2a.test.ts asserts that validateTokenRequest
+# trims the literal string "aidevops_v1_abc"; gitleaks' generic-api-key rule
+# flags it on entropy alone.
+webapp/amplify/functions/shared/a2a.test.ts:generic-api-key:42
+webapp/amplify/functions/shared/a2a.test.ts:generic-api-key:45
