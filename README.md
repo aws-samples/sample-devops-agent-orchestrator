@@ -421,7 +421,3 @@ To refresh manually rather than with `10_refresh_all.py`, re-run steps
 
 For any feedback, questions, or suggestions, please use the issues tab of the
 repository.
-
-## Authors
-
-- DevOps Observatory maintainers
