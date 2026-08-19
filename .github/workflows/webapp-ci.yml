@@ -1,0 +1,45 @@
+name: Web App CI
+
+# Guards against the package.json / package-lock.json drift that breaks the
+# Amplify deploy: `ampx pipeline-deploy` and the hosting build both run
+# `npm ci`, which fails (EUSAGE "not in sync") whenever a dependency in
+# webapp/package.json changes without a matching, committed
+# webapp/package-lock.json. Running the same `npm ci` here catches that on the
+# PR instead of in a failed Amplify build. The build step additionally verifies
+# the SPA type-checks and bundles.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'webapp/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'webapp/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webapp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      # Reproducible install from the committed lockfile — the same command
+      # Amplify runs. Fails if package.json and package-lock.json are out of
+      # sync, so lockfile drift is caught here rather than at deploy time.
+      - name: Install (npm ci)
+        run: npm ci
+
+      # Type-check (tsc -b across SPA, backend, and shared-types) then Vite build.
+      - name: Build
+        run: npm run build
