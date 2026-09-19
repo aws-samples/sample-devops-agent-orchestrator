@@ -30,12 +30,15 @@ w = _load("create_space_worker", "create_space_worker.py")
 class FakeClient:
     """A fake devops-agent client whose create/associate calls are scriptable."""
 
-    def __init__(self, *, result=None, error_code=None, assoc_error_code=None):
+    def __init__(self, *, result=None, error_code=None, assoc_error_code=None,
+                 operator_error_code=None):
         self._result = result
         self._error_code = error_code
         self._assoc_error_code = assoc_error_code
+        self._operator_error_code = operator_error_code
         self.calls = []  # create_agent_space calls
         self.assoc_calls = []  # associate_service calls
+        self.operator_calls = []  # enable_operator_app calls
 
     def create_agent_space(self, **kwargs):
         self.calls.append(kwargs)
@@ -54,6 +57,15 @@ class FakeClient:
                 "AssociateService",
             )
         return {"association": {"associationId": "assoc-1", "serviceId": "aws"}}
+
+    def enable_operator_app(self, **kwargs):
+        self.operator_calls.append(kwargs)
+        if self._operator_error_code:
+            raise ClientError(
+                {"Error": {"Code": self._operator_error_code, "Message": "operator boom"}},
+                "EnableOperatorApp",
+            )
+        return {"agentSpaceId": kwargs.get("agentSpaceId"), "operatorAppUrl": "https://example"}
 
 
 class FakeSession:
@@ -78,6 +90,7 @@ def test_create_space_success_attaches_primary_account(monkeypatch):
     assert out["ok"] is True
     assert out["agentSpaceId"] == "as-123"
     assert out["primaryAccountConfigured"] is True
+    assert out["webOperatorEnabled"] is True
     assert "warning" not in out
     # description forwarded only when provided
     assert client.calls == [{"name": "devops-agent-111", "description": "desc"}]
@@ -89,6 +102,62 @@ def test_create_space_success_attaches_primary_account(monkeypatch):
     assert assoc["configuration"]["aws"]["accountType"] == "monitor"
     assert assoc["configuration"]["aws"]["assumableRoleArn"].endswith(
         ":role/DevOpsAgentSpaceMonitorRole"
+    )
+    # Web operator access is enabled with the IAM auth flow + operator-app role.
+    assert len(client.operator_calls) == 1
+    op = client.operator_calls[0]
+    assert op["agentSpaceId"] == "as-123"
+    assert op["authFlow"] == "iam"
+    assert op["operatorAppRoleArn"].endswith(":role/DevOpsAgentOperatorAppRole")
+
+
+def test_web_operator_can_be_disabled(monkeypatch):
+    monkeypatch.setitem(w.CFG, "HUB_ACCOUNT_ID", "000000000000")
+    client = FakeClient(result={"agentSpaceId": "as-123", "name": "n"})
+    _patch(monkeypatch, client)
+    out = w.create_space("111111111111", "n", enable_web_operator=False)
+    assert out["ok"] is True
+    assert "webOperatorEnabled" not in out
+    assert client.operator_calls == []
+
+
+def test_web_operator_failure_is_a_warning_not_an_error(monkeypatch):
+    monkeypatch.setitem(w.CFG, "HUB_ACCOUNT_ID", "000000000000")
+    client = FakeClient(
+        result={"agentSpaceId": "as-9", "name": "n"}, operator_error_code="AccessDeniedException"
+    )
+    _patch(monkeypatch, client)
+    out = w.create_space("222222222222", "n")
+    # Space + primary account still fine; web operator failure is a warning.
+    assert out["ok"] is True
+    assert out["primaryAccountConfigured"] is True
+    assert out["webOperatorEnabled"] is False
+    assert "AccessDeniedException" in out["warning"]
+
+
+def test_hub_account_without_operator_role_env_warns(monkeypatch):
+    monkeypatch.setitem(w.CFG, "HUB_ACCOUNT_ID", "999999999999")
+    monkeypatch.setenv("AGENT_MONITOR_ROLE_ARN", "arn:aws:iam::999999999999:role/HubMonitor")
+    monkeypatch.delenv("AGENT_OPERATOR_ROLE_ARN", raising=False)
+    client = FakeClient(result={"agentSpaceId": "as-h", "name": "hub"})
+    _patch(monkeypatch, client)
+    out = w.create_space("999999999999", "hub")
+    assert out["webOperatorEnabled"] is False
+    assert "AGENT_OPERATOR_ROLE_ARN" in out["warning"]
+    # No operator enablement attempted when no operator role is available.
+    assert client.operator_calls == []
+
+
+def test_hub_account_uses_operator_role_arn_env(monkeypatch):
+    monkeypatch.setitem(w.CFG, "HUB_ACCOUNT_ID", "999999999999")
+    monkeypatch.setenv("AGENT_MONITOR_ROLE_ARN", "arn:aws:iam::999999999999:role/HubMonitor")
+    monkeypatch.setenv("AGENT_OPERATOR_ROLE_ARN", "arn:aws:iam::999999999999:role/HubOperator")
+    client = FakeClient(result={"agentSpaceId": "as-h", "name": "hub"})
+    _patch(monkeypatch, client)
+    out = w.create_space("999999999999", "hub")
+    assert out["webOperatorEnabled"] is True
+    assert client.operator_calls[0]["operatorAppRoleArn"] == (
+        "arn:aws:iam::999999999999:role/HubOperator"
     )
 
 

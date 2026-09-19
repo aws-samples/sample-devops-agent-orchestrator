@@ -21,6 +21,7 @@ import { summary } from './functions/summary/resource';
 import { spaces } from './functions/spaces/resource';
 import { dashboard } from './functions/dashboard/resource';
 import { graph } from './functions/graph/resource';
+import { graphControl } from './functions/graph-control/resource';
 import { context } from './functions/context/resource';
 import { chat } from './functions/chat/resource';
 import { mcpTools } from './functions/mcp-tools/resource';
@@ -64,6 +65,7 @@ export const backend = defineBackend({
   spaces,
   dashboard,
   graph,
+  graphControl,
   context,
   chat,
   mcpTools,
@@ -334,6 +336,11 @@ route(
 );
 route('/dashboard', HttpMethod.GET, backend.dashboard.resources.lambda, 'DashboardIntegration');
 route('/graph', HttpMethod.GET, backend.graph.resources.lambda, 'GraphIntegration');
+// Graph control: GET status (any) + POST start/stop (Admin, asserted in-handler)
+// of the Neptune Analytics topology graph. `/graph/control` is a distinct path
+// from `/graph` above (exact matches win), sharing one handler.
+route('/graph/control', HttpMethod.GET, backend.graphControl.resources.lambda, 'GraphControlStatusIntegration');
+route('/graph/control', HttpMethod.POST, backend.graphControl.resources.lambda, 'GraphControlActionIntegration');
 // Business context: GET (any) + PUT (Admin, asserted in-handler) share a handler.
 route('/context', HttpMethod.GET, backend.context.resources.lambda, 'ContextGetIntegration');
 route('/context', HttpMethod.PUT, backend.context.resources.lambda, 'ContextPutIntegration');
@@ -380,6 +387,42 @@ backend.graph.resources.lambda.addToRolePolicy(
     resources: [neptuneGraphArn],
   }),
 );
+
+// /graph/control — Admin start/stop (pause/resume) of the Neptune Analytics
+// graph. StartGraph/StopGraph/GetGraph are scoped to the account's graph ARNs;
+// ListGraphs (used to resolve the graph by name) does NOT support resource-level
+// permissions, so it is granted on `*`. No create/delete grants — start/stop is
+// non-destructive, so the handler cannot provision or destroy a graph.
+backend.graphControl.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['neptune-graph:ListGraphs'],
+    resources: ['*'],
+  }),
+);
+backend.graphControl.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: [
+      'neptune-graph:GetGraph',
+      'neptune-graph:StartGraph',
+      'neptune-graph:StopGraph',
+    ],
+    resources: [`arn:aws:neptune-graph:${region}:${account}:graph/*`],
+  }),
+);
+// The last start/stop action + timestamp are persisted to a single S3 object so
+// the status can show "when it was stopped" even after the graph is gone.
+backend.graphControl.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['s3:GetObject', 's3:PutObject'],
+    resources: [objectArn('hub/graph_control.json')],
+  }),
+);
+{
+  const lambda = backend.graphControl.resources.lambda as LambdaFunction;
+  lambda.addEnvironment('NEPTUNE_GRAPH_NAME', config.neptuneGraphName);
+  lambda.addEnvironment('HUB_BUCKET', config.hubBucket);
+  lambda.addEnvironment('HUB_REGION', region);
+}
 
 // /context — read + write the single business-context object (Task 5.2).
 backend.context.resources.lambda.addToRolePolicy(

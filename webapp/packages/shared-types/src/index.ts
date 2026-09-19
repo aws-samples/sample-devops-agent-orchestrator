@@ -287,6 +287,15 @@ export interface CreateSpaceRequest {
   name: string;
   /** Optional human description. */
   description?: string;
+  /**
+   * Whether to enable the space's Operator Web App ("web operator access") on
+   * creation, using a default IAM role (auth flow `iam`). Defaults to `true`
+   * server-side so a new space is reachable from the browser without extra
+   * steps. Enabling is best-effort: if it fails (e.g. the operator-app role is
+   * missing in a linked account) the space is still created and a warning
+   * explains why web access was not enabled.
+   */
+  webOperator?: boolean;
 }
 
 /** A newly created agent space, echoed back on success. */
@@ -302,7 +311,18 @@ export interface CreatedSpace {
    * explains why it could not be attached (the space still exists).
    */
   primaryAccountConfigured?: boolean;
-  /** Present when the space was created but the primary account was not attached. */
+  /**
+   * Whether the space's Operator Web App ("web operator access") was enabled on
+   * creation. Only present when web-operator enablement was requested; `false`
+   * means it could not be enabled (see {@link CreatedSpace.warning}), the space
+   * still exists.
+   */
+  webOperatorEnabled?: boolean;
+  /**
+   * Present when the space was created but a follow-up step was not completed
+   * (the primary account was not attached and/or web operator access was not
+   * enabled). The space itself exists regardless.
+   */
   warning?: string;
 }
 
@@ -563,6 +583,87 @@ export interface GraphResponse {
   edges: GraphEdge[];
   /** Present only when nodes/edges could not be produced. */
   unavailableReason?: GraphUnavailableReason;
+}
+
+// ---------------------------------------------------------------------------
+// Graph control — GET /graph/control (any), POST /graph/control (Admin)
+// ---------------------------------------------------------------------------
+//
+// Start/stop the Neptune Analytics topology graph from the Admin Settings view.
+//
+// Neptune Analytics supports a true pause/resume via the `neptune-graph`
+// StartGraph / StopGraph APIs (non-destructive — the graph and its data are
+// preserved, only compute is released while stopped, which stops the m-NCU-hour
+// charge):
+//   - stop  → StopGraph: the graph moves AVAILABLE → STOPPING → STOPPED. Queries
+//             (the Graph view) are unavailable while stopped, and compute is not
+//             billed. No data is lost.
+//   - start → StartGraph: the graph moves STOPPED → STARTING → AVAILABLE, ready
+//             to query again with the same id and topology.
+// Both operations are asynchronous; the UI polls {@link GraphControlStatus} to
+// reflect the STARTING/STOPPING transition.
+
+/**
+ * Lifecycle state of the Neptune Analytics graph, surfaced to the SPA. Mirrors
+ * the `neptune-graph` graph status (including the STOPPED/STARTING/STOPPING
+ * states used by pause/resume), plus `DELETED` for the "no graph is provisioned"
+ * case and `UNKNOWN` when the status could not be read.
+ */
+export type GraphLifecycleState =
+  | 'AVAILABLE'
+  | 'STOPPED'
+  | 'STARTING'
+  | 'STOPPING'
+  | 'CREATING'
+  | 'UPDATING'
+  | 'DELETING'
+  | 'RESETTING'
+  | 'SNAPSHOTTING'
+  | 'IMPORTING'
+  | 'FAILED'
+  | 'DELETED'
+  | 'UNKNOWN';
+
+/** The action a `POST /graph/control` request performs. */
+export type GraphControlAction = 'start' | 'stop';
+
+/**
+ * `GET /graph/control` — current state of the topology graph plus timing
+ * metrics. `running` is the simple "available and billed for compute" signal;
+ * `transitioning` is true while the graph is starting or stopping so the UI can
+ * show progress and keep polling. When no graph is provisioned at all, `state`
+ * is `DELETED` and neither action is offered.
+ */
+export interface GraphControlStatus {
+  /** True when a graph is provisioned (any state other than not-found). */
+  provisioned: boolean;
+  /** True when the graph is AVAILABLE (running and billed for compute). */
+  running: boolean;
+  /** Raw graph state; `DELETED` when no graph is provisioned. */
+  state: GraphLifecycleState;
+  /** True while starting/stopping (STARTING/STOPPING/…); keep polling. */
+  transitioning: boolean;
+  /** The configured graph name. */
+  graphName: string;
+  /** The graph id, when a graph is provisioned. */
+  graphId?: string;
+  /** ISO-8601 time the graph was created (from the service). */
+  createdAt?: string;
+  /** ISO-8601 time of the last start/stop action initiated from the app. */
+  lastActionAt?: string;
+  /** The last start/stop action initiated from the app. */
+  lastAction?: GraphControlAction;
+}
+
+/** Request body for `POST /graph/control` (Admin only). */
+export interface GraphControlRequest {
+  action: GraphControlAction;
+}
+
+/** Response for `POST /graph/control` — the action taken and the new status. */
+export interface GraphControlActionResponse {
+  action: GraphControlAction;
+  status: GraphControlStatus;
 }
 
 // ---------------------------------------------------------------------------

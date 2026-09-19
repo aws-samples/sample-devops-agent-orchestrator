@@ -302,6 +302,9 @@ function CreateSpacePanel({
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(() => defaultSpaceName(account.account));
   const [description, setDescription] = useState('');
+  // "Web operator access" (Operator Web App) — on by default so a new space is
+  // reachable from the browser. Enablement is best-effort server-side.
+  const [webOperator, setWebOperator] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -320,15 +323,17 @@ function CreateSpacePanel({
       const res = await createSpace({
         accountId: account.account,
         name: name.trim(),
+        webOperator,
         ...(description.trim() ? { description: description.trim() } : {}),
       });
       setShowErrors(false);
       // Mark "Pending refresh" instead of re-fetching — the new space (with its
-      // primary account attached) appears after the next data refresh.
+      // primary account + web operator access) appears after the next refresh.
       onCreated(account.account);
-      // The space was created, but if its primary account could not be attached
-      // keep the panel open to surface the warning; otherwise close.
-      if (res.space.primaryAccountConfigured === false && res.space.warning) {
+      // The space was created; if a follow-up step (primary account or web
+      // operator access) could not be completed, keep the panel open to surface
+      // the warning. Otherwise close.
+      if (res.space.warning) {
         setNotice(res.space.warning);
       } else {
         setOpen(false);
@@ -394,6 +399,29 @@ function CreateSpacePanel({
         />
       </label>
       {showErrors && issues.description && <FieldError>{issues.description}</FieldError>}
+
+      <label
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: '0.5rem',
+          fontSize: '0.8125rem',
+          color: '#344054',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={webOperator}
+          onChange={(e) => setWebOperator(e.target.checked)}
+          disabled={submitting}
+          style={{ marginTop: '0.15rem' }}
+        />
+        <span>
+          Enable <strong>web operator access</strong> (Operator Web App), using a default IAM role.
+          Lets people reach this space from the browser. Best-effort — the space is still created if
+          it can&apos;t be enabled.
+        </span>
+      </label>
 
       {error && <FieldError role="alert">{error}</FieldError>}
 
