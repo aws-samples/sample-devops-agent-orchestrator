@@ -24,6 +24,16 @@ import { Construct } from 'constructs';
  */
 export const AGENT_MONITOR_ROLE_NAME = 'DevOpsAgentSpaceMonitorRole';
 
+/**
+ * Conventional operator-app role name used in LINKED/management accounts (the
+ * role end users assume to reach a space's Operator Web App, "web operator
+ * access"). Mirrors {@link AGENT_MONITOR_ROLE_NAME}: the HUB account's operator
+ * role is created by this construct with a CDK-generated unique name (its ARN is
+ * injected as AGENT_OPERATOR_ROLE_ARN), while linked accounts use this fixed
+ * name (created by the collector-role StackSet when space creation is enabled).
+ */
+export const AGENT_OPERATOR_ROLE_NAME = 'DevOpsAgentOperatorAppRole';
+
 export interface CreateSpaceWorkerProps {
   /** Region hosting the hub resources. */
   readonly hubRegion: string;
@@ -67,6 +77,12 @@ export class CreateSpaceWorker extends Construct {
    */
   public readonly monitorRole: Role;
 
+  /**
+   * The default IAM role backing "web operator access" — the Operator Web App
+   * end users assume to reach a hub space (EnableOperatorApp, auth flow `iam`).
+   */
+  public readonly operatorRole: Role;
+
   constructor(scope: Construct, id: string, props: CreateSpaceWorkerProps) {
     super(scope, id);
 
@@ -106,6 +122,54 @@ export class CreateSpaceWorker extends Construct {
         'Assumed by the AWS DevOps Agent service to monitor the hub account (primary-account association for spaces created from the app).',
     });
 
+    // ---------------------------------------------------------------------
+    // Operator-app role for "web operator access" (the Operator Web App).
+    //
+    // When a new agent space is created we optionally enable its Operator Web
+    // App via EnableOperatorApp with auth flow `iam`, which requires an IAM role
+    // end users assume to reach the app's AIDevOps APIs. This provisions that
+    // default role for the hub account with the trust the CLI onboarding guide
+    // prescribes: the `aidevops.amazonaws.com` service principal with BOTH
+    // sts:AssumeRole and sts:TagSession (the operator app tags the session with
+    // the AgentSpaceId), scoped by aws:SourceAccount + aws:SourceArn to any
+    // agent space in the hub account. Permissions come from the AWS-managed
+    // AIDevOpsOperatorAppAccessPolicy, which scopes access to the specific space
+    // via the aws:PrincipalTag/AgentSpaceId condition.
+    // ---------------------------------------------------------------------
+    this.operatorRole = new Role(this, 'AgentSpaceOperatorRole', {
+      // No explicit roleName — a CDK-generated unique name avoids a cross-branch
+      // collision in the shared hub account (the worker uses the role ARN).
+      assumedBy: new ServicePrincipal('aidevops.amazonaws.com', {
+        conditions: {
+          StringEquals: { 'aws:SourceAccount': hubAccountId },
+          ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${region}:${hubAccountId}:agentspace/*` },
+        },
+      }),
+      managedPolicies: [
+        ManagedPolicy.fromManagedPolicyArn(
+          this,
+          'AIDevOpsOperatorAppAccessPolicy',
+          'arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy',
+        ),
+      ],
+      description:
+        'Assumed by AWS DevOps Agent Operator Web App users to access hub spaces (web operator access for spaces created from the app).',
+    });
+    // The operator-app trust additionally needs sts:TagSession (the service tags
+    // the assumed session with the AgentSpaceId). ServicePrincipal only adds
+    // sts:AssumeRole, so add the TagSession grant to the trust policy directly.
+    this.operatorRole.assumeRolePolicy?.addStatements(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['sts:TagSession'],
+        principals: [new ServicePrincipal('aidevops.amazonaws.com')],
+        conditions: {
+          StringEquals: { 'aws:SourceAccount': hubAccountId },
+          ArnLike: { 'aws:SourceArn': `arn:aws:aidevops:${region}:${hubAccountId}:agentspace/*` },
+        },
+      }),
+    );
+
     // Reuse the same code + layer assets as the refresh workers: the Lambda
     // code asset is the hub `scripts/` dir and the boto3 layer is the pip-built
     // `amplify/refresh/boto3-layer` (built out-of-band by amplify.yml preBuild).
@@ -133,6 +197,10 @@ export class CreateSpaceWorker extends Construct {
       // role name used for other accounts (best-effort in linked accounts).
       AGENT_MONITOR_ROLE_ARN: this.monitorRole.roleArn,
       AGENT_MONITOR_ROLE_NAME: AGENT_MONITOR_ROLE_NAME,
+      // "Web operator access": the hub operator-app role ARN + the conventional
+      // role name used for other accounts (best-effort in linked accounts).
+      AGENT_OPERATOR_ROLE_ARN: this.operatorRole.roleArn,
+      AGENT_OPERATOR_ROLE_NAME: AGENT_OPERATOR_ROLE_NAME,
       ...(props.mgmtAccountId ? { MGMT_ACCOUNT_ID: props.mgmtAccountId } : {}),
       ...(props.mgmtRoleArn ? { MGMT_ROLE_ARN: props.mgmtRoleArn } : {}),
       ...(props.externalId ? { EXTERNAL_ID: props.externalId } : {}),
@@ -172,16 +240,20 @@ export class CreateSpaceWorker extends Construct {
           'aidevops:GetAgentSpace',
           // Attach the hosting account as the space's primary (monitor) account.
           'aidevops:AssociateService',
+          // Enable "web operator access" (the Operator Web App) on new spaces.
+          'aidevops:EnableOperatorApp',
+          'aidevops:GetOperatorApp',
         ],
         resources: ['*'],
       }),
     );
-    // Passing the monitor role to the DevOps Agent service in AssociateService
-    // requires iam:PassRole on that role, constrained to the aidevops service.
+    // Passing the monitor + operator-app roles to the DevOps Agent service (in
+    // AssociateService / EnableOperatorApp) requires iam:PassRole on each,
+    // constrained to the aidevops service.
     this.worker.addToRolePolicy(
       new PolicyStatement({
         actions: ['iam:PassRole'],
-        resources: [this.monitorRole.roleArn],
+        resources: [this.monitorRole.roleArn, this.operatorRole.roleArn],
         conditions: { StringEquals: { 'iam:PassedToService': 'aidevops.amazonaws.com' } },
       }),
     );

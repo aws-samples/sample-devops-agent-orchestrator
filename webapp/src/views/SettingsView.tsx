@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   CHAT_HISTORY_MAX_RETENTION_DAYS,
   CHAT_HISTORY_MIN_RETENTION_DAYS,
+  type GraphControlAction,
+  type GraphControlStatus,
 } from '@devops-observatory/shared-types';
 import { fetchSettings, saveSettings } from '../api/settings';
+import { controlGraph, fetchGraphControlStatus } from '../api/graphControl';
+import { formatGraphTimestamp, viewGraphStatus, type GraphStatusTone } from '../lib/graphControlView';
 import { deleteA2aToken, fetchA2aConfiguredSpaces, storeA2aToken } from '../api/a2a';
 import { fetchSpaces } from '../api/spaces';
 import { ApiRequestError } from '../api/client';
@@ -277,9 +281,220 @@ function AdminSettings({
         </div>
       )}
 
+      <GraphControlSection />
+
       <A2aTokenSection />
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Topology graph control (Neptune Analytics start/stop) — Admin only
+// ---------------------------------------------------------------------------
+
+/** Badge colors per status tone (mirrors the palette used elsewhere in this view). */
+const GRAPH_TONE_STYLES: Record<GraphStatusTone, { color: string; background: string; border: string }> = {
+  running: { color: '#067647', background: '#ecfdf3', border: '#abefc6' },
+  stopped: { color: '#475467', background: '#f2f4f7', border: '#e4e7ec' },
+  transitioning: { color: '#175cd3', background: '#eff4ff', border: '#b2ccff' },
+  error: { color: '#b42318', background: '#fef3f2', border: '#fecdca' },
+};
+
+/**
+ * Admin control to START/STOP (pause/resume) the Neptune Analytics topology
+ * graph.
+ *
+ * Uses the non-destructive StartGraph/StopGraph APIs: stopping releases compute
+ * so the graph stops billing (data is preserved), starting brings it back
+ * available with the same id. Both are asynchronous, so this polls the status
+ * while the graph is transitioning and shows simple timing metrics (when the
+ * graph was created, and the last start/stop action). The backend re-asserts
+ * Admin and rejects an invalid start/stop, so this is UX + convenience only.
+ */
+function GraphControlSection(): JSX.Element {
+  const [status, setStatus] = useState<GraphControlStatus | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    try {
+      const next = await fetchGraphControlStatus();
+      setStatus(next);
+      setLoadError(null);
+    } catch (err: unknown) {
+      setLoadError(
+        err instanceof ApiRequestError ? err.message : 'Unable to load the graph status right now.',
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // While the graph is starting/stopping, poll until it settles.
+  const transitioning = status?.transitioning ?? false;
+  useEffect(() => {
+    if (!transitioning) return;
+    const timer = setInterval(() => void refresh(), 5000);
+    return () => clearInterval(timer);
+  }, [transitioning, refresh]);
+
+  const view = viewGraphStatus(status);
+  const tone = GRAPH_TONE_STYLES[view.tone];
+
+  async function act(action: GraphControlAction): Promise<void> {
+    if (action === 'stop') {
+      const confirmed = window.confirm(
+        'Stopping pauses the Neptune Analytics graph so it stops billing for compute. ' +
+          'The Graph view will be unavailable until you start it again. Data is preserved. ' +
+          'Continue?',
+      );
+      if (!confirmed) return;
+    }
+    setBusy(true);
+    setActionError(null);
+    try {
+      const res = await controlGraph(action);
+      setStatus(res.status);
+    } catch (err: unknown) {
+      setActionError(
+        err instanceof ApiRequestError
+          ? err.message
+          : `The graph could not be ${action === 'start' ? 'started' : 'stopped'}. Please try again.`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const startedAt = formatGraphTimestamp(status?.createdAt);
+  const lastActionAt = formatGraphTimestamp(status?.lastActionAt);
+
+  return (
+    <div style={{ marginTop: '2.5rem', maxWidth: 640 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+        <h3 style={{ margin: 0, fontSize: '1rem', color: '#101828' }}>Topology graph (Neptune Analytics)</h3>
+        <span
+          role="status"
+          aria-live="polite"
+          style={{
+            fontSize: '0.75rem',
+            fontWeight: 600,
+            borderRadius: 999,
+            padding: '0.125rem 0.5rem',
+            color: tone.color,
+            background: tone.background,
+            border: `1px solid ${tone.border}`,
+          }}
+        >
+          {view.label}
+        </span>
+      </div>
+      <p style={{ margin: '0.5rem 0 0.75rem', color: '#667085', fontSize: '0.875rem' }}>
+        Start or stop the graph that powers the Graph view. <strong>Stop</strong> pauses the graph so
+        it stops billing for compute (data is preserved and the Graph view is unavailable meanwhile);
+        <strong> Start</strong> brings it back. Changes take a few minutes.
+      </p>
+
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          onClick={() => void act('start')}
+          disabled={busy || !view.canStart}
+          style={graphButtonStyle(!busy && view.canStart, '#175cd3')}
+        >
+          {busy && view.canStart ? 'Starting…' : 'Start'}
+        </button>
+        <button
+          type="button"
+          onClick={() => void act('stop')}
+          disabled={busy || !view.canStop}
+          style={graphButtonStyle(!busy && view.canStop, '#b42318')}
+        >
+          Stop
+        </button>
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          disabled={busy}
+          style={smallButtonStyle}
+        >
+          Refresh status
+        </button>
+      </div>
+
+      <dl
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'auto 1fr',
+          gap: '0.375rem 1rem',
+          margin: '1rem 0 0',
+          fontSize: '0.8125rem',
+        }}
+      >
+        <GraphMetric label="Status" value={view.label} />
+        {startedAt && <GraphMetric label="Created" value={startedAt} />}
+        {status?.graphId && <GraphMetric label="Graph id" value={status.graphId} mono />}
+        {status?.lastAction && lastActionAt && (
+          <GraphMetric
+            label={status.lastAction === 'stop' ? 'Last stopped' : 'Last started'}
+            value={lastActionAt}
+          />
+        )}
+      </dl>
+
+      {transitioning && (
+        <p role="status" aria-live="polite" style={{ margin: '0.75rem 0 0', color: '#475467', fontSize: '0.8125rem' }}>
+          {view.label} This can take a few minutes — the status updates automatically.
+        </p>
+      )}
+      {loadError && (
+        <p role="alert" style={{ ...errorBannerStyle, marginTop: '0.75rem' }}>
+          {loadError}
+        </p>
+      )}
+      {actionError && (
+        <p role="alert" style={{ ...errorBannerStyle, marginTop: '0.75rem' }}>
+          {actionError}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** One label/value row in the graph timing-metrics list. */
+function GraphMetric({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}): JSX.Element {
+  return (
+    <>
+      <dt style={{ margin: 0, color: '#667085', fontWeight: 600 }}>{label}</dt>
+      <dd style={{ margin: 0, color: '#101828', ...(mono ? { fontFamily: 'monospace' } : {}) }}>
+        {value}
+      </dd>
+    </>
+  );
+}
+
+function graphButtonStyle(enabled: boolean, accent: string) {
+  return {
+    padding: '0.5rem 1.25rem',
+    borderRadius: 6,
+    border: 'none',
+    background: enabled ? accent : '#98a2b3',
+    color: '#fff',
+    cursor: enabled ? 'pointer' : 'not-allowed',
+    fontSize: '0.9375rem',
+    fontWeight: 600,
+  } as const;
 }
 
 // ---------------------------------------------------------------------------

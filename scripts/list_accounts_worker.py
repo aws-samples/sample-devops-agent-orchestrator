@@ -15,10 +15,14 @@ via the default-credentials path); the hub task role itself only needs
 ``sts:AssumeRole`` on that one role.
 """
 import json
+import os
 
 from _common import CFG, hub_session, list_org_accounts
 
-BUCKET = CFG["HUB_BUCKET"]
+# Falls back to a placeholder so importing this module (e.g. from unit tests)
+# never raises when HUB_BUCKET is unset; a real run resolves it from config.env
+# / the environment (the S3 client is created lazily inside the handler).
+BUCKET = CFG.get("HUB_BUCKET") or os.getenv("HUB_BUCKET", "unit-test-placeholder-bucket")
 # Fixed key (single-flight refresh, single admin actor -> no per-run collision).
 ACCOUNTS_KEY = "refresh/accounts.json"
 

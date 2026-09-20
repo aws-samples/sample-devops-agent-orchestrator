@@ -33,13 +33,27 @@ test('accepts a valid request and trims fields', () => {
     accountId: '123456789012',
     name: 'my-space',
     description: 'hello',
+    // Web operator access defaults ON.
+    webOperator: true,
   });
+});
+
+test('webOperator defaults on and is only disabled by an explicit false', () => {
+  const on = validateCreateSpaceInput({ accountId: '123456789012', name: 'n' });
+  assert.equal(on.valid && on.request.webOperator, true);
+  const off = validateCreateSpaceInput({ accountId: '123456789012', name: 'n', webOperator: false });
+  assert.equal(off.valid && off.request.webOperator, false);
+  // A non-boolean (e.g. a stray string) does not disable it.
+  const weird = validateCreateSpaceInput({ accountId: '123456789012', name: 'n', webOperator: 'no' });
+  assert.equal(weird.valid && weird.request.webOperator, true);
 });
 
 test('omits an empty description', () => {
   const out = validateCreateSpaceInput({ accountId: '123456789012', name: 'n', description: '   ' });
   assert.equal(out.valid, true);
   assert.equal(out.valid && 'description' in out.request, false);
+  // webOperator is still present (it always defaults on).
+  assert.equal(out.valid && out.request.webOperator, true);
 });
 
 test('rejects a non-object body', () => {
@@ -92,6 +106,20 @@ test('a success without a name omits the name', () => {
   assert.equal('name' in space, false);
 });
 
+test('maps the worker web-operator + warning fields through on success', () => {
+  const space = mapWorkerResult({
+    ok: true,
+    accountId: '123456789012',
+    agentSpaceId: 'as-abc',
+    primaryAccountConfigured: true,
+    webOperatorEnabled: false,
+    warning: 'web operator access could not be enabled',
+  });
+  assert.equal(space.webOperatorEnabled, false);
+  assert.equal(space.primaryAccountConfigured, true);
+  assert.match(space.warning ?? '', /web operator/);
+});
+
 test('conflict maps to a ConflictError (409)', () => {
   assert.throws(
     () => mapWorkerResult({ ok: false, code: 'conflict', error: 'exists' }),
@@ -138,8 +166,8 @@ test('batch: accepts known accounts, de-duplicates, and names each space', () =>
   if (!out.valid) return;
   assert.deepEqual(out.accountIds, ['111111111111', '222222222222']);
   assert.deepEqual(out.requests, [
-    { accountId: '111111111111', name: defaultSpaceName('111111111111') },
-    { accountId: '222222222222', name: defaultSpaceName('222222222222') },
+    { accountId: '111111111111', name: defaultSpaceName('111111111111'), webOperator: true },
+    { accountId: '222222222222', name: defaultSpaceName('222222222222'), webOperator: true },
   ]);
 });
 

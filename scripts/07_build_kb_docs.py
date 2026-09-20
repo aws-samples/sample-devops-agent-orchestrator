@@ -21,12 +21,16 @@ names and no Business_Unit docs are emitted.
 Run with hub credentials (profile 123456789012).
 """
 import json
+import os
 from collections import Counter
 
 from _common import CFG, hub_session
 
-BUCKET = CFG["HUB_BUCKET"]
-DOCS = CFG["KB_DOCS_PREFIX"]
+# Fall back to safe defaults so importing this module (e.g. from unit tests)
+# never raises when HUB_BUCKET/KB_DOCS_PREFIX are unset; a real run resolves
+# them from config.env / the environment. The S3 client below is created lazily.
+BUCKET = CFG.get("HUB_BUCKET") or os.getenv("HUB_BUCKET", "unit-test-placeholder-bucket")
+DOCS = CFG.get("KB_DOCS_PREFIX") or os.getenv("KB_DOCS_PREFIX", "kb/")
 
 _S3 = None
 

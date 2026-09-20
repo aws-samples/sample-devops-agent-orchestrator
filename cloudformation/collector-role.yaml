@@ -86,9 +86,13 @@ Resources:
                   Action:
                     - aidevops:CreateAgentSpace
                     - aidevops:AssociateService
-                  # Resource '*' is required: aidevops:CreateAgentSpace and
-                  # aidevops:AssociateService do not support resource-level
-                  # permissions (similar to ecr:GetAuthorizationToken).
+                    # Enable "web operator access" (the Operator Web App) on a
+                    # newly created space, using the operator-app role below.
+                    - aidevops:EnableOperatorApp
+                    - aidevops:GetOperatorApp
+                  # Resource '*' is required: these actions do not support
+                  # resource-level permissions (similar to
+                  # ecr:GetAuthorizationToken).
                   Resource: '*'
                 - !Ref AWS::NoValue
               # Attaching the primary account passes the monitor role below to
@@ -99,7 +103,12 @@ Resources:
                 - Sid: PassMonitorRole
                   Effect: Allow
                   Action: iam:PassRole
-                  Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/DevOpsAgentSpaceMonitorRole'
+                  # The monitor role (primary-account association) and the
+                  # operator-app role (web operator access) are both passed to
+                  # the DevOps Agent service.
+                  Resource:
+                    - !Sub 'arn:aws:iam::${AWS::AccountId}:role/DevOpsAgentSpaceMonitorRole'
+                    - !Sub 'arn:aws:iam::${AWS::AccountId}:role/DevOpsAgentOperatorAppRole'
                   Condition:
                     StringEquals:
                       iam:PassedToService: aidevops.amazonaws.com
@@ -130,6 +139,36 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy
 
+  # Role end users assume to reach a space's Operator Web App ("web operator
+  # access") in this account. It is the operatorAppRoleArn passed to
+  # EnableOperatorApp (auth flow iam) for spaces the hub creates here (mirrors
+  # the hub account's operator-app role provisioned by the Amplify backend).
+  # Created only when agent-space creation is enabled, since it is only needed
+  # then. The operator app tags the assumed session with the AgentSpaceId, so
+  # the trust allows sts:TagSession in addition to sts:AssumeRole.
+  OperatorRole:
+    Type: AWS::IAM::Role
+    Condition: CreateMonitorRole
+    Properties:
+      RoleName: DevOpsAgentOperatorAppRole
+      Description: Assumed by AWS DevOps Agent Operator Web App users to access spaces in this account (web operator access for spaces created by the hub).
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: aidevops.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:aws:aidevops:*:${AWS::AccountId}:agentspace/*'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AIDevOpsOperatorAppAccessPolicy
+
 Outputs:
   CollectorRoleArn:
     Description: ARN of the collector role (same name in every account).
@@ -138,3 +177,7 @@ Outputs:
     Condition: CreateMonitorRole
     Description: ARN of the monitor role the DevOps Agent service assumes (present only in non-hub accounts when agent-space creation is enabled).
     Value: !GetAtt MonitorRole.Arn
+  OperatorRoleArn:
+    Condition: CreateMonitorRole
+    Description: ARN of the operator-app role for web operator access (present only in non-hub accounts when agent-space creation is enabled).
+    Value: !GetAtt OperatorRole.Arn

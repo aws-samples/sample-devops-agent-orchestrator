@@ -16,11 +16,15 @@ rather than silently dropping accounts (Requirement 10.10).
 """
 import datetime as dt
 import json
+import os
 
 from _common import CFG, hub_session
 
-BUCKET = CFG["HUB_BUCKET"]
-REGION = CFG["REGION"]
+# Fall back to safe defaults so importing this module (e.g. from unit tests)
+# never raises when HUB_BUCKET/REGION are unset; a real run resolves them from
+# config.env / the environment (the S3 client is created lazily in the handler).
+BUCKET = CFG.get("HUB_BUCKET") or os.getenv("HUB_BUCKET", "unit-test-placeholder-bucket")
+REGION = CFG.get("REGION") or os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 MANIFEST_KEY = "raw/_manifest.json"
 ACCOUNT_PREFIX = "raw/account="
 ACCOUNT_SUMMARY_SUFFIX = "/_account.json"

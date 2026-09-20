@@ -37,6 +37,8 @@ export interface WorkerResult {
   agentSpaceId?: string;
   name?: string;
   primaryAccountConfigured?: boolean;
+  /** Whether the Operator Web App ("web operator access") was enabled. */
+  webOperatorEnabled?: boolean;
   warning?: string;
   code?: 'validation' | 'create_denied' | 'conflict' | 'error';
   error?: string;
@@ -60,6 +62,8 @@ export function validateCreateSpaceInput(
   const accountId = typeof raw.accountId === 'string' ? raw.accountId.trim() : '';
   const name = typeof raw.name === 'string' ? raw.name.trim() : '';
   const descriptionRaw = typeof raw.description === 'string' ? raw.description.trim() : '';
+  // "Web operator access" defaults ON; only an explicit `false` disables it.
+  const webOperator = raw.webOperator === false ? false : true;
 
   if (!ACCOUNT_ID_RE.test(accountId)) {
     return { valid: false, message: 'A valid 12-digit AWS account id is required.' };
@@ -76,7 +80,7 @@ export function validateCreateSpaceInput(
       message: `The description must be at most ${AGENT_SPACE_DESCRIPTION_MAX_LENGTH} characters.`,
     };
   }
-  const request: CreateSpaceRequest = { accountId, name };
+  const request: CreateSpaceRequest = { accountId, name, webOperator };
   if (descriptionRaw.length > 0) request.description = descriptionRaw;
   return { valid: true, request };
 }
@@ -99,6 +103,9 @@ export function mapWorkerResult(result: WorkerResult): CreatedSpace {
       ...(result.name ? { name: result.name } : {}),
       ...(typeof result.primaryAccountConfigured === 'boolean'
         ? { primaryAccountConfigured: result.primaryAccountConfigured }
+        : {}),
+      ...(typeof result.webOperatorEnabled === 'boolean'
+        ? { webOperatorEnabled: result.webOperatorEnabled }
         : {}),
       ...(result.warning ? { warning: result.warning } : {}),
     };
@@ -221,7 +228,12 @@ export function validateBatchCreateInput(
       }.`,
     };
   }
-  const requests = accountIds.map((accountId) => ({ accountId, name: defaultSpaceName(accountId) }));
+  // Batch-created starter spaces get web operator access by default too.
+  const requests = accountIds.map((accountId) => ({
+    accountId,
+    name: defaultSpaceName(accountId),
+    webOperator: true,
+  }));
   return { valid: true, requests, accountIds };
 }
 
