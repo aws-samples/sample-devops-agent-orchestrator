@@ -47,9 +47,13 @@ AWS I/O so they are unit-testable in isolation.
 import csv
 import io
 import json
+import os
 from _common import CFG, hub_session
 
-BUCKET = CFG["HUB_BUCKET"]
+# Falls back to a placeholder so importing this module (e.g. from unit tests)
+# never raises when HUB_BUCKET is unset; a real run resolves it from config.env
+# / the environment. The S3 client below is created lazily.
+BUCKET = CFG.get("HUB_BUCKET") or os.getenv("HUB_BUCKET", "unit-test-placeholder-bucket")
 
 #: Max length of a truncated free-text label (Requirements 9.6, 9.7).
 LABEL_MAX = 120

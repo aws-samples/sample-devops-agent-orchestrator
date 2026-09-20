@@ -42,14 +42,32 @@ fan collection out across accounts (webapp task 26):
 """
 import io
 import json
+import os
 import zipfile
 import datetime as dt
 from botocore.exceptions import ClientError
 from _common import CFG, hub_session, list_org_accounts, assume_collector
 
-REGION = CFG["REGION"]
-BUCKET = CFG["HUB_BUCKET"]
-S3 = hub_session().client("s3")
+# Config lookups fall back to safe defaults so importing this module (e.g. from
+# unit tests) never raises when HUB_BUCKET/REGION are unset. A real collection
+# run resolves them from config.env / the environment; the lazy s3() below
+# refuses to run against the placeholder bucket.
+REGION = CFG.get("REGION") or os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+BUCKET = CFG.get("HUB_BUCKET") or os.getenv("HUB_BUCKET", "unit-test-placeholder-bucket")
+
+_S3 = None
+
+
+def s3():
+    """Lazily create the hub S3 client so importing this module never requires
+    AWS credentials or a configured profile. Refuses to run when HUB_BUCKET is
+    not actually configured (i.e. still the unit-test placeholder)."""
+    global _S3
+    if _S3 is None:
+        if not BUCKET or BUCKET == "unit-test-placeholder-bucket":
+            raise RuntimeError("HUB_BUCKET must be configured for collection")
+        _S3 = hub_session().client("s3", region_name=REGION)
+    return _S3
 
 
 def js(o):
@@ -57,7 +75,7 @@ def js(o):
 
 
 def put(key, obj):
-    S3.put_object(Bucket=BUCKET, Key=key, Body=js(obj).encode(), ContentType="application/json")
+    s3().put_object(Bucket=BUCKET, Key=key, Body=js(obj).encode(), ContentType="application/json")
 
 
 def extract_zip_texts(zip_bytes):
